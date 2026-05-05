@@ -5,52 +5,49 @@ from typing import Callable, List, Tuple, Dict
 import matplotlib.dates as mdates
 from matplotlib.tri import Triangulation
 
-def plot_timeseries(ax, times, data, field, source_mgr=None, ref_time=None):
-    """
-    Plots probe data and overlays rain events from the SourceManager as bars.
-    """
-    # 1. Ensure we have a reference datetime
-    ref = ref_time or (source_mgr.config.start_datetime if source_mgr else None)
-    
-    # 2. Convert numeric seconds to datetimes if necessary
-    if np.issubdtype(np.array(times).dtype, np.number):
-        times = [ref + pd.Timedelta(seconds=t) for t in times]
+def plot_timeseries(ax, df, cols=None, source_mgr=None, y_label=None, labels=None):
+    # 1. Handle Time Axis (use datetime if available, otherwise hours)
+    if isinstance(df.index, pd.MultiIndex):
+        x_axis = df.index.get_level_values('datetime')
+        is_date = True
+    else:
+        x_axis = df.index / 3600.0  # Convert seconds to hours
+        is_date = False
 
-    # 2. Plot the probe data
-    for name, probe in data.items():
-        ax.plot(times, probe[field], lw=2, label=name)
+    # 2. Plot selected columns
+    target_cols = cols if cols else df.columns
+    for i, col in enumerate(target_cols):
+        if col in df.columns:
+            ax.plot(x_axis, df[col], lw=2, label=labels[i] if labels else col)
 
-    # 3. Overlay Rain from SourceManager
+    # 3. Overlay Rain
     if source_mgr is not None:
         ax_rain = ax.twinx()
-        _plot_rain_bars(ax_rain, source_mgr)
-        ax_rain.set_ylabel("Rain Intensity (mm/hr)")
-    
-    _format_time_axis(ax)
+        _plot_rain_bars(ax_rain, source_mgr, is_date)
+        ax_rain.set_ylabel("Rain (mm/hr)")
 
-    ax.set_ylabel(field)
+    # Formatting
+    if is_date:
+        _format_time_axis(ax)
+    else:
+        ax.set_xlabel("Time (hours)")
+
+    ax.set_ylabel(y_label if y_label else "Value")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="upper left")
 
-def _plot_rain_bars(ax, source_mgr):
-    """
-    Extracts data from SourceManager and plots as bar chart.
-    """
-    df = source_mgr.data
-    # Aggregate all zones if they share columns, or pick the 'rain' column specifically
-    # Converting m/s to mm/hr: value * 1000 (mm) * 3600 (s)
-    rain_series = df['rain'] * 3.6e6 if 'rain' in df.columns else df.iloc[:, 0]
-
-    x_axis = [source_mgr.config.start_datetime + pd.Timedelta(seconds=t) for t in df.index]
-    # Calculate bar width in days for matplotlib dates (dt in days)
-    width = source_mgr.config.dt / 86400.0
-
-    # Plot as bars
-    ax.bar(x_axis, rain_series, width=width, align='edge', 
-           alpha=0.3, color='blue', label='Rainfall')
+def _plot_rain_bars(ax, source_mgr, use_datetime):
+    df_rain = source_mgr.data
+    rain_val = df_rain['rain']if 'rain' in df_rain.columns else df_rain.iloc[:, 0]
     
-    # Invert Y-axis for the classic 'top-down' rain look (optional)
-    ax.set_ylim(rain_series.max() * 3, 0) 
+    if use_datetime:
+        x = [source_mgr.config.start_datetime + pd.Timedelta(seconds=s) for s in df_rain.index]
+        width = source_mgr.config.dt / 86400.0 # width in days
+    else:
+        x = df_rain.index / 3600.0
+        width = source_mgr.config.dt / 3600.0
+
+    ax.bar(x, rain_val, width=width, align='edge', alpha=0.2, color='blue', label='Rain')
 
 def _format_time_axis(ax, ):
     loc = mdates.AutoDateLocator()
@@ -92,47 +89,40 @@ def plot_snapshot(ax, data, cfg, mesh=None, vmin=None, vmax=None,
 
     return cf
 
-def plot_snapshot_grid(ax, fields, cfg, mesh=None, rows=3, cols=2):
-
+def plot_snapshot_grid(ax, df_snapshots, field_name, cfg, rows=6, cols=1):
     fig = ax.figure
     ax.remove()
-
-    gs = fig.add_gridspec(rows, cols, hspace=0.1, wspace=0.1)
-
-    axes = np.array([
-        fig.add_subplot(gs[r, c])
-        for r in range(rows)
-        for c in range(cols)
-    ])
-    vals = []
-    for f in fields.values():
-        v = f["saturation"].dat.data
-        vals.append(np.asarray(v))
-
-    vmin = np.min([v.min() for v in vals])
-    vmax = np.max([v.max() for v in vals])
+    gs = fig.add_gridspec(rows, cols, hspace=0.2, wspace=0.1)
+    
+    # We use only the first N snapshots that fit in the grid
+    times = df_snapshots.index[:rows*cols]
+    axes = []
+    
+    # Determine global Vmin/Vmax for consistent scaling
+    all_vals = []
+    for t in times:
+        func = df_snapshots.at[t, field_name]
+        all_vals.append(func.dat.data_ro)
+    vmin = np.min(all_vals)
+    vmax = np.max(all_vals)
 
     cf = None
-    # plots
-    for i, f in enumerate(fields.values()):
-        if i < len(axes):
-            cf = plot_snapshot(axes[i], f["saturation"], cfg, mesh, vmin=vmin, vmax=vmax)
-            axes[i].set_title(f"Snapshot {i+1}")
-    for j in range(len(fields), len(axes)):
-        axes[j].axis("off")
-
-    # axis labels (outer only)
-    for i, ax_i in enumerate(axes):
+    for i, t in enumerate(times):
         r, c = divmod(i, cols)
-        if r != rows - 1:
-            ax_i.set_xlabel(""); ax_i.set_xticklabels([])
-        if c != 0:
-            ax_i.set_ylabel(""); ax_i.set_yticklabels([])
+        ax_sub = fig.add_subplot(gs[r, c])
+        func = df_snapshots.at[t, field_name]
+        
+        cf = plot_snapshot(ax_sub, func, cfg, vmin=vmin, vmax=vmax)
+        
+        # Title with hour formatting
+        ax_sub.set_title(f"t = {t/3600:.1f}h", fontsize=9)
+        
+        # Clean labels for inner grid
+        if r != rows - 1: ax_sub.set_xlabel(""); ax_sub.set_xticklabels([])
+        if c != 0: ax_sub.set_ylabel(""); ax_sub.set_yticklabels([])
+        axes.append(ax_sub)
 
-    cbar = fig.colorbar(cf, ax=axes, label=f"{cfg.label} ({cfg.units})")
-    cbar.ax.set_position([0.85, 0.15, 0.02, 0.7])
-
-    return fig, axes
+    fig.colorbar(cf, ax=axes, label=f"{cfg.label} ({cfg.units})", fraction=0.02, pad=0.04)
     
 def add_probe_markers(ax, probe_positions: List[Tuple], colors: List[str] = None):
     if colors is None:

@@ -24,14 +24,34 @@ class SourceManager:
         self.data.loc[mask, source_type] = value
 
     def import_csv(self, filepath: str, datetime_col: str = None):
-        """
-        Imports raw time-series data. 
-        IMPORTANT: All numeric values in the CSV columns must be in SI units (m/s).
-        """
         df = load_csv(filepath, datetime_col)
-            
-        # Reindex and forward-fill to align with simulation time steps
-        new_data = df.reindex(self.config.time_steps).ffill().fillna(0.0)
+
+        # --- Ensure DatetimeIndex ---
+        if datetime_col and datetime_col in df.columns:
+            df[datetime_col] = pd.to_datetime(df[datetime_col])
+            df = df.set_index(datetime_col)
+        else:
+            # Try to convert existing index
+            df.index = pd.to_datetime(df.index, errors="coerce")
+
+        if not isinstance(df.index, pd.DatetimeIndex):
+            raise TypeError("Data must have a DatetimeIndex or a valid datetime column")
+
+        df = df.sort_index()
+
+        # --- Simulation index ---
+        sim_index = self.config.start_datetime + pd.to_timedelta(self.config.time_steps, unit="sec")
+        dt = pd.to_timedelta(self.config.dt, unit="sec")
+
+        # --- Resample (rain = rate → mean) ---
+        new_data = (
+            df.resample(dt).mean()
+            .reindex(sim_index)
+            .interpolate()
+            .fillna(0.0)
+        )/24
+
+        new_data.index = self.config.time_steps
         self.data = pd.concat([self.data, new_data], axis=1)
 
     def import_weather_data(self, start_date, end_date):
@@ -53,7 +73,7 @@ class SourceManager:
         
         # Get the current flux values for all columns at time t
         idx = (np.abs(self.config.time_steps - t)).argmin()
-        base_value = self.data.iloc[idx][0]
+        base_value = self.data.iloc[idx].iloc[0]
         
         for name, info in self.zones.items():
             # zone-specific scaling

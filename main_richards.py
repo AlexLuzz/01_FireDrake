@@ -10,9 +10,9 @@ def main():
     # ==========================================
     config = SimulationConfig(
         project_name="Test",
-        user="AQ96560", # alexi or AQ96560
-        start_datetime=datetime(2024, 5, 1),
-        end_datetime=datetime(2024, 5, 5),
+        user="alexi", # alexi or AQ96560
+        start_datetime=datetime(2024, 4, 1),
+        end_datetime=datetime(2024, 4, 20),
         dt_td=timedelta(hours=3)
     )
     # ==========================================
@@ -36,13 +36,13 @@ def main():
     # Choose one method :
 
     # Define the rain by hand 
-    source_mgr.add_event(12, 18, 5, "Rain (mm/hr)")
+    #source_mgr.add_event(12, 18, 5, "Rain (mm/hr)")
 
     # Import from CSV 
-    #source_mgr.import_csv(
-    #    filepath=config.paths.RAF_METEO, # IMPORTANT: values are in SI units (m/s)
-    #    datetime_col='Date' # Ensure this matches your CSV header
-    #    )
+    source_mgr.import_csv(
+        filepath=config.paths.RAF_METEO, # IMPORTANT: values are in SI units (m/s)
+        datetime_col='Date' # Ensure this matches your CSV header
+        )
 
     # Fetch directly from Meteostat
     # source_mgr.import_weather_data(config.start_datetime, config.end_datetime)
@@ -79,7 +79,7 @@ def main():
     # 8. MONITORING
     # ==========================================
     snapshot_times = [0.0, 5*3600.0, config.t_end * 0.1, config.t_end * 0.3, config.t_end * 0.7, config.t_end]
-    monitor = SimulationMonitor(domain.mesh, snapshot_times=snapshot_times)
+    monitor = SimulationMonitor(config, domain.mesh, snapshot_times=snapshot_times)
     
     # ==========================================
     # 9. SOLVER

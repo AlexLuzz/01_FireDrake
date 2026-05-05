@@ -21,23 +21,13 @@ class ReportBase(ABC):
         self.pdf.close()
         print(f"✓ Report saved: {self.filename}")
 
-    def create_page(
-        self,
-        rows=1,
-        cols=1,
-        landscape=False,
-        height_ratios=None,
-        width_ratios=None,
-        margins=None,
-    ):
-        figsize = (11.69, 8.27) if landscape else (8.27, 11.69)
+    def create_page(self, rows=1, cols=1, height_ratios=None, width_ratios=None):
+        # Hardcoded A4 Portrait dimensions[cite: 8]
+        figsize = (8.27, 11.69) 
         fig = plt.figure(figsize=figsize)
 
-        if margins is None:
-            if landscape:
-                margins = dict(left=0.05, right=0.95, top=0.96, bottom=0.04)
-            else:
-                margins = dict(left=0.08, right=0.92, top=0.93, bottom=0.07)
+        # Adjusted right margin to 0.88 to accommodate twinx() labels[cite: 8]
+        margins = dict(left=0.1, right=0.88, top=0.94, bottom=0.07)
 
         gs = fig.add_gridspec(
             nrows=rows,
@@ -48,10 +38,7 @@ class ReportBase(ABC):
             wspace=0.2,
             **margins
         )
-
-        # track figure for later saving
         self._current_figs.append(fig)
-
         return fig, gs
     
     @contextmanager
