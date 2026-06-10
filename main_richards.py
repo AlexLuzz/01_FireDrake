@@ -10,7 +10,7 @@ def main():
     # ==========================================
     config = SimulationConfig(
         project_name="Test",
-        user="alexi", # alexi or AQ96560
+        user="AQ96560", # alexi or AQ96560
         start_datetime=datetime(2024, 4, 1),
         end_datetime=datetime(2024, 4, 20),
         dt_td=timedelta(hours=3)

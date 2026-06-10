@@ -113,8 +113,7 @@ class VanGenuchtenModel(HydraulicModel):
                  params: VanGenuchtenParams, 
                  epsilon: float = 0.051,
                  kr_min: float = 1e-8,
-                 Ss: float = 1e-4,
-                 use_UFL: bool = False):
+                 Ss: float = 1e-4):
         """
         Parameters:
         -----------
@@ -132,7 +131,6 @@ class VanGenuchtenModel(HydraulicModel):
         self.epsilon = epsilon
         self.kr_min = kr_min
         self.Ss = Ss
-        self.use_UFL = use_UFL
     
     @property
     def theta_r(self) -> float:
@@ -165,39 +163,22 @@ class VanGenuchtenModel(HydraulicModel):
     def _Se(self, pressure):
         """
         S_e(p): Effective saturation [-]
-        Fast path for floats, symbolic path for UFL
         """
         eps = self.epsilon
         alpha = self.params.alpha
         n = self.params.n
         m = self.params.m
         
-        if self.use_UFL:
-            # Symbolic path for UFL
+        if pressure >= eps:
+            return 1.0
+        elif pressure <= -eps:
             Se = 1.0 / (1.0 + (alpha * abs(pressure))**n)**m
-            Se_smooth = conditional(
-                pressure >= eps,
-                1.0,
-                conditional(
-                    pressure <= -eps,
-                    Se,
-                    # Linear transition
-                    (1.0 / (1.0 + (alpha * eps)**n)**m) +
-                    ((1.0 - (1.0 / (1.0 + (alpha * eps)**n)**m)) * (pressure + eps) / (2.0 * eps))
-                )
-            )
-            return min_value(1.0, max_value(0.0, Se_smooth))
+            return max(0.0, min(1.0, Se))
         else:
-            if pressure >= eps:
-                return 1.0
-            elif pressure <= -eps:
-                Se = 1.0 / (1.0 + (alpha * abs(pressure))**n)**m
-                return max(0.0, min(1.0, Se))
-            else:
-                Se_unsat = 1.0 / (1.0 + (alpha * eps)**n)**m
-                weight = (pressure + eps) / (2.0 * eps)
-                Se = Se_unsat + (1.0 - Se_unsat) * weight
-                return max(0.0, min(1.0, Se))
+            Se_unsat = 1.0 / (1.0 + (alpha * eps)**n)**m
+            weight = (pressure + eps) / (2.0 * eps)
+            Se = Se_unsat + (1.0 - Se_unsat) * weight
+            return max(0.0, min(1.0, Se))
     
     def _kr(self, pressure):
         """
@@ -207,39 +188,24 @@ class VanGenuchtenModel(HydraulicModel):
         eps = self.epsilon
         l = self.params.l_param
         m = self.params.m
-        if self.use_UFL:
+
+        if pressure >= eps:
+            return 1.0
+        elif pressure <= -eps:
             Se = self._Se(pressure)
-            term = max_value(0.0, 1.0 - Se**(1.0/m))
+            term = max(0.0, 1.0 - Se**(1.0/m))
             kr_val = (Se**l) * (1.0 - term**m)**2
-            kr_smooth = conditional(
-                pressure >= eps,
-                1.0,
-                conditional(
-                    pressure <= -eps,
-                    kr_val,
-                    # Linear interpolation in transition
-                    kr_val + (1.0 - kr_val) * (pressure + eps) / (2.0 * eps)
-                )
-            )
-            return min_value(1.0, max_value(self.kr_min, kr_smooth))
+            kr_min = self.kr_min
+            return max(kr_min, min(kr_val, 1.0))
         else:
-            if pressure >= eps:
-                return 1.0
-            elif pressure <= -eps:
-                Se = self._Se(pressure)
-                term = max(0.0, 1.0 - Se**(1.0/m))
-                kr_val = (Se**l) * (1.0 - term**m)**2
-                kr_min = self.kr_min
-                return max(kr_min, min(kr_val, 1.0))
-            else:
-                Se_unsat = self._Se(-eps)
-                term = max(0.0, 1.0 - Se_unsat**(1.0/m))
-                kr_unsat = (Se_unsat**l) * (1.0 - term**m)**2
-                kr_min = self.kr_min
-                kr_unsat = max(kr_min, min(kr_unsat, 1.0))
-                weight = (pressure + eps) / (2.0 * eps)
-                kr_val = kr_unsat + (1.0 - kr_unsat) * weight
-                return max(kr_min, min(kr_val, 1.0))
+            Se_unsat = self._Se(-eps)
+            term = max(0.0, 1.0 - Se_unsat**(1.0/m))
+            kr_unsat = (Se_unsat**l) * (1.0 - term**m)**2
+            kr_min = self.kr_min
+            kr_unsat = max(kr_min, min(kr_unsat, 1.0))
+            weight = (pressure + eps) / (2.0 * eps)
+            kr_val = kr_unsat + (1.0 - kr_unsat) * weight
+            return max(kr_min, min(kr_val, 1.0))
 
     def _Cm(self, pressure):
         """
@@ -252,46 +218,28 @@ class VanGenuchtenModel(HydraulicModel):
         theta_r = self.params.theta_r
         eps = self.epsilon
         Ss = self.Ss
-        if self.use_UFL:
+
+        if pressure >= eps:
+            return Ss
+        elif pressure <= -eps:
             Se = self._Se(pressure)
-            term = max_value(0.0, 1.0 - Se**(1.0 / m))
+            term = max(0.0, 1.0 - Se**(1.0 / m))
             Cm_val = ((alpha * m) / (1.0 - m) *
-                    (theta_s - theta_r) *
-                    Se**(1.0 / m) *
-                    term**m)
-            Cm_smooth = conditional(
-                pressure >= eps,
-                Ss,
-                conditional(
-                    pressure <= -eps,
-                    Cm_val,
-                    # Linear interpolation in transition
-                    Cm_val + (Ss - Cm_val) * (pressure + eps) / (2.0 * eps)
-                )
-            )
-            return max_value(Ss, Cm_smooth)
+                        (theta_s - theta_r) *
+                        Se**(1.0 / m) *
+                        term**m)
+            return max(Ss, Cm_val)
         else:
-            if pressure >= eps:
-                return Ss
-            elif pressure <= -eps:
-                Se = self._Se(pressure)
-                term = max(0.0, 1.0 - Se**(1.0 / m))
-                Cm_val = ((alpha * m) / (1.0 - m) *
-                          (theta_s - theta_r) *
-                          Se**(1.0 / m) *
-                          term**m)
-                return max(Ss, Cm_val)
-            else:
-                Se_unsat = self._Se(-eps)
-                term = max(0.0, 1.0 - Se_unsat**(1.0 / m))
-                Cm_unsat = ((alpha * m) / (1.0 - m) *
-                            (theta_s - theta_r) *
-                            Se_unsat**(1.0 / m) *
-                            term**m)
-                Cm_unsat = max(Ss, Cm_unsat)
-                weight = (pressure + eps) / (2.0 * eps)
-                Cm_val = Cm_unsat + (Ss - Cm_unsat) * weight
-                return max(Ss, Cm_val)
+            Se_unsat = self._Se(-eps)
+            term = max(0.0, 1.0 - Se_unsat**(1.0 / m))
+            Cm_unsat = ((alpha * m) / (1.0 - m) *
+                        (theta_s - theta_r) *
+                        Se_unsat**(1.0 / m) *
+                        term**m)
+            Cm_unsat = max(Ss, Cm_unsat)
+            weight = (pressure + eps) / (2.0 * eps)
+            Cm_val = Cm_unsat + (Ss - Cm_unsat) * weight
+            return max(Ss, Cm_val)
 
 # ==============================================
 # CURVE-BASED EMPIRICAL MODEL
